@@ -215,6 +215,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit;
 }
 
+// ── Elimina elemento lista ────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_item') {
+    $listName  = basename($_POST['list_name'] ?? '');
+    $itemIndex = isset($_POST['item_index']) ? (int)$_POST['item_index'] : -1;
+    $filePath  = $uploadDir . $listName;
+
+    if ($listName !== '' && $itemIndex >= 0 && file_exists($filePath)) {
+        $rawLines = preg_split('/\r\n|\r|\n/', file_get_contents($filePath));
+        if (isset($rawLines[$itemIndex])) {
+            array_splice($rawLines, $itemIndex, 1);
+            while (count($rawLines) > 0 && trim(end($rawLines)) === '') array_pop($rawLines);
+            file_put_contents($filePath, implode(PHP_EOL, $rawLines));
+        }
+    }
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($listName));
+    exit;
+}
+
 // ── Download Markdown ─────────────────────────────────────────────────────────
 if (isset($_GET['download_md']) && !empty($_GET['download_md'])) {
     $dlName   = basename($_GET['download_md']);
@@ -473,6 +491,9 @@ unset($_SESSION['message']);
         .list-items li.drag-above { border-top: 3px solid #2196F3; }
         .list-items li.drag-below { border-bottom: 3px solid #2196F3; }
         .list-item.drag-target { background: #e3f2fd !important; outline: 2px dashed #2196F3; border-left-color: #1565c0; }
+        .delete-item { margin-left: auto; background: none; border: none; color: #ccc; font-size: 15px; cursor: pointer; padding: 2px 4px; line-height: 1; border-radius: 3px; flex-shrink: 0; }
+        .delete-item:hover { color: #f44336; background: #ffeaea; }
+        @media print { .delete-item { display: none !important; } }
         @media print {
             body { background: white; padding: 0; font-size: 13px; }
             .header, .top-bar, .lists-panel, .message,
@@ -635,6 +656,7 @@ unset($_SESSION['message']);
                                         <span class="drag-handle">⠿</span>
                                         <input type="checkbox" <?php echo $item['done'] ? 'checked' : ''; ?>>
                                         <span class="txt"><?php echo $i++ . '. ' . htmlspecialchars($item['text']); ?></span>
+                                        <button type="button" class="delete-item" title="Elimina elemento">✕</button>
                                     </form>
                                 </li>
                             <?php endforeach; ?>
@@ -673,6 +695,23 @@ function copyMd(url, btn) {
         var newPanel = doc.querySelector('.view-panel');
         if (newPanel) { viewPanel.innerHTML = newPanel.innerHTML; initDrag(); }
     }
+
+    // ── Elimina item AJAX ──────────────────────────────────────────────────────
+    viewPanel.addEventListener('click', function (e) {
+        var btn = e.target.closest('.delete-item');
+        if (!btn) return;
+        var li = btn.closest('li');
+        if (!li) return;
+        li.style.opacity = '0.4';
+        var fd = new FormData();
+        fd.append('action',     'delete_item');
+        fd.append('list_name',  li.dataset.list);
+        fd.append('item_index', li.dataset.index);
+        fetch(location.pathname + location.search, { method: 'POST', body: fd })
+            .then(function (r) { return r.text(); })
+            .then(refreshPanel)
+            .catch(function () { li.style.opacity = ''; });
+    });
 
     // ── Checkbox AJAX ──────────────────────────────────────────────────────────
     viewPanel.addEventListener('change', function (e) {
