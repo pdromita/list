@@ -446,6 +446,21 @@ unset($_SESSION['message']);
         .list-items li.drag-above { border-top: 3px solid #2196F3; }
         .list-items li.drag-below { border-bottom: 3px solid #2196F3; }
         .list-item.drag-target { background: #e3f2fd !important; outline: 2px dashed #2196F3; border-left-color: #1565c0; }
+        @media print {
+            body { background: white; padding: 0; font-size: 13px; }
+            .header, .top-bar, .lists-panel, .message,
+            .no-list, .view-panel h2 > div, .edit-actions,
+            .drag-handle, .btn { display: none !important; }
+            .content { display: block; }
+            .view-panel { box-shadow: none; padding: 0; }
+            .view-panel h2 { font-size: 18px; border-bottom: 1px solid #ccc; padding-bottom: 6px; margin-bottom: 12px; }
+            .list-items li { background: none !important; border-left: none; padding: 5px 0; margin: 0;
+                             border-bottom: 1px solid #eee; border-radius: 0; break-inside: avoid; }
+            .list-items li.done .txt { color: #888; }
+            .item-row input[type="checkbox"] { transform: none; }
+            .print-meta { display: block !important; font-size: 11px; color: #999; margin-bottom: 14px; }
+        }
+        .print-meta { display: none; }
     </style>
 </head>
 <body>
@@ -526,9 +541,11 @@ unset($_SESSION['message']);
                                 <a href="?view=<?php echo urlencode($currentList); ?>&amp;edit=1" class="btn btn-orange" style="font-size:13px;padding:6px 12px;">✏️ Modifica</a>
                                 <a href="?download_md=<?php echo urlencode($currentList); ?>" class="btn btn-green" style="font-size:13px;padding:6px 12px;" title="Scarica in formato Markdown">⬇️ MD</a>
                                 <button onclick="copyMd('?download_md=<?php echo urlencode($currentList); ?>', this)" class="btn btn-blue" style="font-size:13px;padding:6px 12px;" title="Copia in Markdown">📋 Copia MD</button>
+                                <button onclick="window.print()" class="btn btn-slate" style="font-size:13px;padding:6px 12px;" title="Stampa lista">🖨️ Stampa</button>
                             </div>
                         <?php endif; ?>
                     </h2>
+                    <div class="print-meta">Stampato il <?php echo date('d/m/Y \a\l\l\e H:i'); ?></div>
 
                     <?php if ($editMode): ?>
                         <!-- Modalità modifica -->
