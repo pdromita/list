@@ -290,6 +290,33 @@ if (isset($_GET['download_all_md'])) {
     exit;
 }
 
+// ── Ricerca globale (JSON) ────────────────────────────────────────────────────
+if (isset($_GET['search_query'])) {
+    $q       = strtolower(trim($_GET['search_query'] ?? ''));
+    $results = [];
+    if ($q !== '') {
+        $allFiles = array_diff(scandir($uploadDir), ['.', '..']);
+        rsort($allFiles);
+        foreach ($allFiles as $f) {
+            $rawLines = preg_split('/\r\n|\r|\n/', file_get_contents($uploadDir . $f));
+            $matches  = [];
+            foreach ($rawLines as $lineIndex => $line) {
+                if (trim($line) === '') continue;
+                $done = false; $text = $line;
+                if (preg_match('/^\s*\[x\]\s*(.*)$/i', $line, $m)) { $done = true; $text = $m[1]; }
+                elseif (preg_match('/^\s*\[\s\]\s*(.*)$/', $line, $m)) { $text = $m[1]; }
+                if (stripos($text, $q) !== false) {
+                    $matches[] = ['index' => $lineIndex, 'text' => $text, 'done' => $done];
+                }
+            }
+            if (count($matches) > 0) $results[] = ['list' => $f, 'items' => $matches];
+        }
+    }
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($results, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 // ── Riordina elementi lista ───────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'reorder') {
     $listName = basename($_POST['list_name'] ?? '');
@@ -467,6 +494,16 @@ unset($_SESSION['message']);
         #searchCount { font-size: 13px; color: #999; white-space: nowrap; }
         .search-hidden { display: none !important; }
         mark { background: #fff176; border-radius: 2px; padding: 0 1px; }
+        #searchResults { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,.1); padding: 20px; }
+        .sr-group { margin-bottom: 20px; }
+        .sr-group-title { font-weight: bold; color: #2196F3; margin-bottom: 8px; font-size: 15px; }
+        .sr-group-title a { color: inherit; text-decoration: none; }
+        .sr-group-title a:hover { text-decoration: underline; }
+        .sr-item { display: flex; align-items: center; gap: 8px; padding: 7px 10px; margin-bottom: 4px;
+                   background: #f0f7ff; border-left: 4px solid #4caf50; border-radius: 4px; font-size: 14px; }
+        .sr-item.done { background: #eef7ee; border-left-color: #7cb342; }
+        .sr-item.done .sr-text { text-decoration: line-through; color: #4f6b4f; }
+        .sr-empty { color: #999; text-align: center; padding: 30px 0; }
         @media print { .search-bar { display: none !important; } }
     </style>
 </head>
@@ -510,11 +547,13 @@ unset($_SESSION['message']);
         </div>
 
         <div class="search-bar">
-            <input type="search" id="globalSearch" placeholder="🔍 Cerca in liste e elementi..." autocomplete="off">
+            <input type="search" id="globalSearch" placeholder="🔍 Cerca in tutte le liste..." autocomplete="off">
             <span id="searchCount"></span>
         </div>
 
-        <div class="content">
+        <div id="searchResults" style="display:none;"></div>
+
+        <div class="content" id="mainContent">
             <div class="lists-panel">
                 <h2 style="display:flex;justify-content:space-between;align-items:center;">
                     <span>📁 Le Tue Liste</span>
@@ -759,52 +798,63 @@ function copyMd(url, btn) {
     initDrag();
 
     // ── Ricerca globale ────────────────────────────────────────────────────────
-    var searchInput = document.getElementById('globalSearch');
-    var searchCount = document.getElementById('searchCount');
+    var searchInput  = document.getElementById('globalSearch');
+    var searchCount  = document.getElementById('searchCount');
+    var searchPanel  = document.getElementById('searchResults');
+    var mainContent  = document.getElementById('mainContent');
+    var searchTimer  = null;
+
     if (searchInput) {
         searchInput.addEventListener('input', function () {
-            var q = this.value.trim().toLowerCase();
-            var listMatches = 0, itemMatches = 0;
-
-            // Filtra nomi lista (pannello sinistro)
-            document.querySelectorAll('.list-item').forEach(function (item) {
-                var nameEl = item.querySelector('a.name');
-                if (!nameEl) return;
-                var text = nameEl.textContent.toLowerCase();
-                var visible = !q || text.includes(q);
-                item.classList.toggle('search-hidden', !visible);
-                if (visible) {
-                    listMatches++;
-                    nameEl.innerHTML = q ? highlight(nameEl.textContent, q) : escHtml(nameEl.textContent);
-                } else {
-                    nameEl.innerHTML = escHtml(nameEl.textContent);
-                }
-            });
-
-            // Filtra elementi lista aperta (pannello destro)
-            document.querySelectorAll('.list-items li').forEach(function (li) {
-                var txtEl = li.querySelector('.txt');
-                if (!txtEl) return;
-                var raw = txtEl.textContent.replace(/^\d+\.\s*/, '');
-                var num = txtEl.textContent.match(/^(\d+\.\s*)/);
-                var prefix = num ? num[1] : '';
-                var visible = !q || raw.toLowerCase().includes(q);
-                li.classList.toggle('search-hidden', !visible);
-                if (visible) {
-                    itemMatches++;
-                    txtEl.innerHTML = prefix + (q ? highlight(raw, q) : escHtml(raw));
-                } else {
-                    txtEl.innerHTML = escHtml(txtEl.textContent);
-                }
-            });
+            clearTimeout(searchTimer);
+            var q = this.value.trim();
 
             if (!q) {
-                searchCount.textContent = '';
-            } else {
-                var parts = [];
-                if (listMatches > 0) parts.push(listMatches + ' list' + (listMatches === 1 ? 'a' : 'e'));
-                if (itemMatches > 0) parts.push(itemMatches + ' element' + (itemMatches === 1 ? 'o' : 'i'));
-                searchCount.textContent = parts.length ? parts.join(', ') + ' trovati' : 'Nessun risultato';
+                searchPanel.style.display = 'none';
+                mainContent.style.display = '';
+                searchCount.textContent   = '';
+                return;
+            }
+
+            searchTimer = setTimeout(function () {
+                fetch('?search_query=' + encodeURIComponent(q))
+                    .then(function (r) { return r.json(); })
+                    .then(function (groups) {
+                        mainContent.style.display  = 'none';
+                        searchPanel.style.display  = 'block';
+
+                        if (groups.length === 0) {
+                            searchPanel.innerHTML    = '<div class="sr-empty">Nessun risultato per <strong>' + escHtml(q) + '</strong></div>';
+                            searchCount.textContent  = 'Nessun risultato';
+                            return;
+                        }
+
+                        var totalItems = groups.reduce(function (n, g) { return n + g.items.length; }, 0);
+                        searchCount.textContent = totalItems + ' element' + (totalItems === 1 ? 'o' : 'i') +
+                                                  ' in ' + groups.length + ' list' + (groups.length === 1 ? 'a' : 'e');
+
+                        searchPanel.innerHTML = groups.map(function (g) {
+                            var items = g.items.map(function (item) {
+                                return '<div class="sr-item' + (item.done ? ' done' : '') + '">' +
+                                       '<input type="checkbox"' + (item.done ? ' checked' : '') + ' disabled>' +
+                                       '<span class="sr-text">' + highlight(escHtml(item.text), q) + '</span>' +
+                                       '</div>';
+                            }).join('');
+                            return '<div class="sr-group">' +
+                                   '<div class="sr-group-title">📁 <a href="?view=' + encodeURIComponent(g.list) + '">' + escHtml(g.list) + '</a>' +
+                                   ' <span style="font-weight:normal;color:#999;font-size:13px;">(' + g.items.length + ')</span></div>' +
+                                   items + '</div>';
+                        }).join('');
+                    });
+            }, 280);
+        });
+
+        // Ripristina vista normale svuotando con la X del campo search
+        searchInput.addEventListener('search', function () {
+            if (!this.value) {
+                searchPanel.style.display = 'none';
+                mainContent.style.display = '';
+                searchCount.textContent   = '';
             }
         });
     }
