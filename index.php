@@ -442,7 +442,10 @@ unset($_SESSION['message']);
                 <h2 style="display:flex;justify-content:space-between;align-items:center;">
                     <span>📁 Le Tue Liste</span>
                     <?php if (count($lists) > 0): ?>
-                    <a href="?download_all_md=1" class="btn btn-green" style="font-size:12px;padding:5px 10px;" title="Scarica tutte le liste in Markdown">⬇️ Tutte MD</a>
+                    <div style="display:flex;gap:6px;">
+                        <a href="?download_all_md=1" class="btn btn-green" style="font-size:12px;padding:5px 10px;" title="Scarica tutte le liste in Markdown">⬇️ Tutte</a>
+                        <button onclick="copyMd('?download_all_md=1', this)" class="btn btn-blue" style="font-size:12px;padding:5px 10px;" title="Copia tutte le liste in Markdown">📋 Copia tutte</button>
+                    </div>
                     <?php endif; ?>
                 </h2>
                 <?php if (count($lists) > 0): ?>
@@ -471,7 +474,8 @@ unset($_SESSION['message']);
                             <div style="display:flex;gap:8px;">
                                 <a href="?view=<?php echo urlencode($currentList); ?>&amp;rename=1" class="btn btn-slate" style="font-size:13px;padding:6px 12px;">📝 Rinomina</a>
                                 <a href="?view=<?php echo urlencode($currentList); ?>&amp;edit=1" class="btn btn-orange" style="font-size:13px;padding:6px 12px;">✏️ Modifica</a>
-                                <a href="?download_md=<?php echo urlencode($currentList); ?>" class="btn btn-green" style="font-size:13px;padding:6px 12px;" title="Scarica in formato Markdown per analisi AI">⬇️ MD</a>
+                                <a href="?download_md=<?php echo urlencode($currentList); ?>" class="btn btn-green" style="font-size:13px;padding:6px 12px;" title="Scarica in formato Markdown">⬇️ MD</a>
+                                <button onclick="copyMd('?download_md=<?php echo urlencode($currentList); ?>', this)" class="btn btn-blue" style="font-size:13px;padding:6px 12px;" title="Copia in Markdown">📋 Copia MD</button>
                             </div>
                         <?php endif; ?>
                     </h2>
@@ -524,6 +528,23 @@ unset($_SESSION['message']);
         </div>
     </div>
 <script>
+function copyMd(url, btn) {
+    var orig = btn.textContent;
+    fetch(url)
+        .then(function (r) { return r.text(); })
+        .then(function (text) {
+            return navigator.clipboard.writeText(text);
+        })
+        .then(function () {
+            btn.textContent = '✅ Copiato!';
+            setTimeout(function () { btn.textContent = orig; }, 2000);
+        })
+        .catch(function () {
+            btn.textContent = '❌ Errore';
+            setTimeout(function () { btn.textContent = orig; }, 2000);
+        });
+}
+
 (function () {
     var viewPanel = document.querySelector('.view-panel');
     if (!viewPanel) return;
