@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Sfondo arrotondato -->
+  <rect width="32" height="32" rx="6" fill="#2196F3"/>
+  <!-- Appunti: corpo -->
+  <rect x="7" y="10" width="18" height="17" rx="2" fill="white"/>
+  <!-- Clip in cima -->
+  <rect x="12" y="7" width="8" height="5" rx="2" fill="#0b7dda"/>
+  <rect x="13.5" y="8.5" width="5" height="2" rx="1" fill="white"/>
+  <!-- Riga 1 con spunta -->
+  <polyline points="10,16.5 11.5,18 14,15" stroke="#4caf50" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="15.5" y="16" width="7" height="1.5" rx="0.75" fill="#bbb"/>
+  <!-- Riga 2 con spunta -->
+  <polyline points="10,21 11.5,22.5 14,19.5" stroke="#4caf50" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="15.5" y="20.5" width="5" height="1.5" rx="0.75" fill="#bbb"/>
+</svg>
