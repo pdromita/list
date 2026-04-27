@@ -215,6 +215,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit;
 }
 
+// ── Download Markdown ─────────────────────────────────────────────────────────
+if (isset($_GET['download_md']) && !empty($_GET['download_md'])) {
+    $dlName   = basename($_GET['download_md']);
+    $dlPath   = $uploadDir . $dlName;
+    if (file_exists($dlPath)) {
+        $rawLines = preg_split('/\r\n|\r|\n/', file_get_contents($dlPath));
+        $items    = [];
+        foreach ($rawLines as $line) {
+            if (trim($line) === '') continue;
+            $done = false;
+            $text = $line;
+            if (preg_match('/^\s*\[x\]\s*(.*)$/i', $line, $m)) { $done = true; $text = $m[1]; }
+            elseif (preg_match('/^\s*\[\s\]\s*(.*)$/', $line, $m)) { $text = $m[1]; }
+            $items[] = ['text' => $text, 'done' => $done];
+        }
+        $total     = count($items);
+        $completed = count(array_filter($items, fn($i) => $i['done']));
+        $pct       = $total > 0 ? round($completed / $total * 100) : 0;
+        $date      = date('Y-m-d');
+
+        $md  = "# Lista: " . $dlName . "\n\n";
+        $md .= "**Data export:** $date  \n";
+        $md .= "**Completati:** $completed / $total ($pct%)  \n\n";
+        $md .= "## Elementi\n\n";
+        foreach ($items as $item) {
+            $md .= ($item['done'] ? '- [x] ' : '- [ ] ') . $item['text'] . "\n";
+        }
+
+        $mdName = pathinfo($dlName, PATHINFO_FILENAME) . '_' . $date . '.md';
+        header('Content-Type: text/markdown; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $mdName . '"');
+        header('Content-Length: ' . strlen($md));
+        echo $md;
+        exit;
+    }
+}
+
 // ── Elimina lista ─────────────────────────────────────────────────────────────
 if (isset($_GET['delete']) && !empty($_GET['delete'])) {
     $fileToDelete = basename($_GET['delete']);
@@ -391,6 +428,7 @@ unset($_SESSION['message']);
                             <div style="display:flex;gap:8px;">
                                 <a href="?view=<?php echo urlencode($currentList); ?>&amp;rename=1" class="btn btn-slate" style="font-size:13px;padding:6px 12px;">📝 Rinomina</a>
                                 <a href="?view=<?php echo urlencode($currentList); ?>&amp;edit=1" class="btn btn-orange" style="font-size:13px;padding:6px 12px;">✏️ Modifica</a>
+                                <a href="?download_md=<?php echo urlencode($currentList); ?>" class="btn btn-green" style="font-size:13px;padding:6px 12px;" title="Scarica in formato Markdown per analisi AI">⬇️ MD</a>
                             </div>
                         <?php endif; ?>
                     </h2>
