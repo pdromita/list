@@ -844,9 +844,32 @@ function copyMd(url, btn) {
 
         // Pannello sinistro — drop target per spostamento
         document.querySelectorAll('.list-item').forEach(function (item) {
+            if (item.dataset.dropInit) return;
+            item.dataset.dropInit = '1';
+
             var a = item.querySelector('a.name');
             if (!a) return;
             var targetList = new URLSearchParams(a.getAttribute('href').split('?')[1]).get('view');
+
+            // I figli (link, bottoni) gestiscono drag autonomamente e propagano al parent
+            item.querySelectorAll('a, button').forEach(function (child) {
+                child.addEventListener('dragover', function (e) {
+                    if (!dragSrc || dragSrc.dataset.list === targetList) return;
+                    e.preventDefault();
+                    item.classList.add('drag-target');
+                });
+                child.addEventListener('dragleave', function (e) {
+                    if (!item.contains(e.relatedTarget)) item.classList.remove('drag-target');
+                });
+                child.addEventListener('drop', function (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    item.classList.remove('drag-target');
+                    if (!dragSrc || dragSrc.dataset.list === targetList) return;
+                    dragSrc.style.opacity = '0.3';
+                    doMoveItem(dragSrc.dataset.list, dragSrc.dataset.index, targetList);
+                });
+            });
 
             item.addEventListener('dragover', function (e) {
                 if (!dragSrc || dragSrc.dataset.list === targetList) return;
