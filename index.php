@@ -515,7 +515,7 @@ unset($_SESSION['message']);
         #searchCount { font-size: 13px; color: #999; white-space: nowrap; }
         .search-hidden { display: none !important; }
         mark { background: #fff176; border-radius: 2px; padding: 0 1px; }
-        #searchResults { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,.1); padding: 20px; }
+        #searchResults { background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,.1); padding: 20px; overflow-y: auto; }
         .sr-group { margin-bottom: 20px; }
         .sr-group-title { font-weight: bold; color: #2196F3; margin-bottom: 8px; font-size: 15px; }
         .sr-group-title a { color: inherit; text-decoration: none; }
@@ -571,8 +571,6 @@ unset($_SESSION['message']);
             <input type="search" id="globalSearch" placeholder="🔍 Cerca in tutte le liste..." autocomplete="off">
             <span id="searchCount"></span>
         </div>
-
-        <div id="searchResults" style="display:none;"></div>
 
         <div class="content" id="mainContent">
             <div class="lists-panel">
@@ -668,6 +666,8 @@ unset($_SESSION['message']);
                     <div class="no-list">Seleziona una lista da visualizzare</div>
                 <?php endif; ?>
             </div>
+
+            <div id="searchResults" style="display:none;"></div>
         </div>
     </div>
 <script>
@@ -689,7 +689,6 @@ function copyMd(url, btn) {
 (function () {
     var viewPanel   = document.querySelector('.view-panel');
     var searchPanel = document.getElementById('searchResults');
-    var mainContent = document.getElementById('mainContent');
     var searchInput = document.getElementById('globalSearch');
     var searchCount = document.getElementById('searchCount');
     var searchTimer = null;
@@ -717,10 +716,9 @@ function copyMd(url, btn) {
         if (newPanel) { viewPanel.innerHTML = newPanel.innerHTML; initDrag(); }
     }
     function rerunSearch(html) {
-        // aggiorna anche il view-panel in background
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var newPanel = doc.querySelector('.view-panel');
-        if (newPanel) viewPanel.innerHTML = newPanel.innerHTML;
+        if (newPanel) { viewPanel.innerHTML = newPanel.innerHTML; initDrag(); }
         doSearch(lastQuery);
     }
     function afterMove() {
@@ -882,7 +880,7 @@ function copyMd(url, btn) {
         fetch('?search_query=' + encodeURIComponent(q))
             .then(function (r) { return r.json(); })
             .then(function (groups) {
-                mainContent.style.display = 'none';
+                viewPanel.style.display   = 'none';
                 searchPanel.style.display = 'block';
 
                 if (groups.length === 0) {
@@ -917,7 +915,7 @@ function copyMd(url, btn) {
 
     function clearSearch() {
         searchPanel.style.display = 'none';
-        mainContent.style.display = '';
+        viewPanel.style.display   = '';
         searchCount.textContent   = '';
         lastQuery = '';
     }
