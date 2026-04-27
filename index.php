@@ -252,6 +252,44 @@ if (isset($_GET['download_md']) && !empty($_GET['download_md'])) {
     }
 }
 
+// ── Download Markdown tutte le liste ──────────────────────────────────────────
+if (isset($_GET['download_all_md'])) {
+    $allFiles = array_diff(scandir($uploadDir), ['.', '..']);
+    rsort($allFiles);
+    $date = date('Y-m-d');
+    $md   = "# Export completo liste\n\n";
+    $md  .= "**Data export:** $date  \n";
+    $md  .= "**Liste totali:** " . count($allFiles) . "  \n\n";
+
+    foreach ($allFiles as $f) {
+        $rawLines  = preg_split('/\r\n|\r|\n/', file_get_contents($uploadDir . $f));
+        $items     = [];
+        foreach ($rawLines as $line) {
+            if (trim($line) === '') continue;
+            $done = false; $text = $line;
+            if (preg_match('/^\s*\[x\]\s*(.*)$/i', $line, $m)) { $done = true; $text = $m[1]; }
+            elseif (preg_match('/^\s*\[\s\]\s*(.*)$/', $line, $m)) { $text = $m[1]; }
+            $items[] = ['text' => $text, 'done' => $done];
+        }
+        $total     = count($items);
+        $completed = count(array_filter($items, fn($i) => $i['done']));
+        $pct       = $total > 0 ? round($completed / $total * 100) : 0;
+
+        $md .= "---\n\n## Lista: $f\n\n";
+        $md .= "**Completati:** $completed / $total ($pct%)  \n\n";
+        foreach ($items as $item) {
+            $md .= ($item['done'] ? '- [x] ' : '- [ ] ') . $item['text'] . "\n";
+        }
+        $md .= "\n";
+    }
+
+    header('Content-Type: text/markdown; charset=utf-8');
+    header('Content-Disposition: attachment; filename="liste_' . $date . '.md"');
+    header('Content-Length: ' . strlen($md));
+    echo $md;
+    exit;
+}
+
 // ── Elimina lista ─────────────────────────────────────────────────────────────
 if (isset($_GET['delete']) && !empty($_GET['delete'])) {
     $fileToDelete = basename($_GET['delete']);
@@ -401,7 +439,12 @@ unset($_SESSION['message']);
 
         <div class="content">
             <div class="lists-panel">
-                <h2>📁 Le Tue Liste</h2>
+                <h2 style="display:flex;justify-content:space-between;align-items:center;">
+                    <span>📁 Le Tue Liste</span>
+                    <?php if (count($lists) > 0): ?>
+                    <a href="?download_all_md=1" class="btn btn-green" style="font-size:12px;padding:5px 10px;" title="Scarica tutte le liste in Markdown">⬇️ Tutte MD</a>
+                    <?php endif; ?>
+                </h2>
                 <?php if (count($lists) > 0): ?>
                     <?php foreach ($lists as $list): ?>
                         <div class="list-item">
