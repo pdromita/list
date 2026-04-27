@@ -461,6 +461,13 @@ unset($_SESSION['message']);
             .print-meta { display: block !important; font-size: 11px; color: #999; margin-bottom: 14px; }
         }
         .print-meta { display: none; }
+        .search-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+        .search-bar input { flex: 1; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; outline: none; transition: border-color .2s; }
+        .search-bar input:focus { border-color: #2196F3; box-shadow: 0 0 0 3px rgba(33,150,243,.15); }
+        #searchCount { font-size: 13px; color: #999; white-space: nowrap; }
+        .search-hidden { display: none !important; }
+        mark { background: #fff176; border-radius: 2px; padding: 0 1px; }
+        @media print { .search-bar { display: none !important; } }
     </style>
 </head>
 <body>
@@ -500,6 +507,11 @@ unset($_SESSION['message']);
                     <button type="submit" class="btn btn-green">Crea Lista</button>
                 </form>
             </div>
+        </div>
+
+        <div class="search-bar">
+            <input type="search" id="globalSearch" placeholder="🔍 Cerca in liste e elementi..." autocomplete="off">
+            <span id="searchCount"></span>
         </div>
 
         <div class="content">
@@ -745,6 +757,65 @@ function copyMd(url, btn) {
     }
 
     initDrag();
+
+    // ── Ricerca globale ────────────────────────────────────────────────────────
+    var searchInput = document.getElementById('globalSearch');
+    var searchCount = document.getElementById('searchCount');
+    if (searchInput) {
+        searchInput.addEventListener('input', function () {
+            var q = this.value.trim().toLowerCase();
+            var listMatches = 0, itemMatches = 0;
+
+            // Filtra nomi lista (pannello sinistro)
+            document.querySelectorAll('.list-item').forEach(function (item) {
+                var nameEl = item.querySelector('a.name');
+                if (!nameEl) return;
+                var text = nameEl.textContent.toLowerCase();
+                var visible = !q || text.includes(q);
+                item.classList.toggle('search-hidden', !visible);
+                if (visible) {
+                    listMatches++;
+                    nameEl.innerHTML = q ? highlight(nameEl.textContent, q) : escHtml(nameEl.textContent);
+                } else {
+                    nameEl.innerHTML = escHtml(nameEl.textContent);
+                }
+            });
+
+            // Filtra elementi lista aperta (pannello destro)
+            document.querySelectorAll('.list-items li').forEach(function (li) {
+                var txtEl = li.querySelector('.txt');
+                if (!txtEl) return;
+                var raw = txtEl.textContent.replace(/^\d+\.\s*/, '');
+                var num = txtEl.textContent.match(/^(\d+\.\s*)/);
+                var prefix = num ? num[1] : '';
+                var visible = !q || raw.toLowerCase().includes(q);
+                li.classList.toggle('search-hidden', !visible);
+                if (visible) {
+                    itemMatches++;
+                    txtEl.innerHTML = prefix + (q ? highlight(raw, q) : escHtml(raw));
+                } else {
+                    txtEl.innerHTML = escHtml(txtEl.textContent);
+                }
+            });
+
+            if (!q) {
+                searchCount.textContent = '';
+            } else {
+                var parts = [];
+                if (listMatches > 0) parts.push(listMatches + ' list' + (listMatches === 1 ? 'a' : 'e'));
+                if (itemMatches > 0) parts.push(itemMatches + ' element' + (itemMatches === 1 ? 'o' : 'i'));
+                searchCount.textContent = parts.length ? parts.join(', ') + ' trovati' : 'Nessun risultato';
+            }
+        });
+    }
+
+    function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    function highlight(text, q) {
+        var re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+        return escHtml(text).replace(re, '<mark>$1</mark>');
+    }
 }());
 </script>
 </body>
