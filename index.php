@@ -426,7 +426,7 @@ unset($_SESSION['message']);
                                         <input type="hidden" name="action" value="toggle_item">
                                         <input type="hidden" name="list_name" value="<?php echo htmlspecialchars($currentList); ?>">
                                         <input type="hidden" name="item_index" value="<?php echo (int)$item['index']; ?>">
-                                        <input type="checkbox" <?php echo $item['done'] ? 'checked' : ''; ?> onchange="this.form.submit()">
+                                        <input type="checkbox" <?php echo $item['done'] ? 'checked' : ''; ?>>
                                         <span class="txt"><?php echo $i++ . '. ' . htmlspecialchars($item['text']); ?></span>
                                     </form>
                                 </li>
@@ -441,5 +441,30 @@ unset($_SESSION['message']);
             </div>
         </div>
     </div>
+<script>
+(function () {
+    var viewPanel = document.querySelector('.view-panel');
+    if (!viewPanel) return;
+
+    viewPanel.addEventListener('change', function (e) {
+        var cb = e.target;
+        if (cb.type !== 'checkbox') return;
+
+        var form = cb.closest('form');
+        if (!form) return;
+
+        cb.disabled = true;
+
+        fetch(location.pathname + location.search, { method: 'POST', body: new FormData(form) })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var newPanel = doc.querySelector('.view-panel');
+                if (newPanel) viewPanel.innerHTML = newPanel.innerHTML;
+            })
+            .catch(function () { cb.disabled = false; });
+    });
+}());
+</script>
 </body>
 </html>
