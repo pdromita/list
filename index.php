@@ -687,13 +687,56 @@ function copyMd(url, btn) {
 }
 
 (function () {
-    var viewPanel = document.querySelector('.view-panel');
+    var viewPanel   = document.querySelector('.view-panel');
+    var searchPanel = document.getElementById('searchResults');
+    var mainContent = document.getElementById('mainContent');
+    var searchInput = document.getElementById('globalSearch');
+    var searchCount = document.getElementById('searchCount');
+    var searchTimer = null;
+    var lastQuery   = '';
+    var dragSrc     = null;
+
     if (!viewPanel) return;
 
+    // ── Utilità ────────────────────────────────────────────────────────────────
+    function escHtml(s) {
+        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    function highlight(text, q) {
+        var re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+        return escHtml(text).replace(re, '<mark>$1</mark>');
+    }
+    function isSearchActive() {
+        return searchPanel && searchPanel.style.display !== 'none' && lastQuery !== '';
+    }
+
+    // ── Aggiornamento pannelli ─────────────────────────────────────────────────
     function refreshPanel(html) {
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var newPanel = doc.querySelector('.view-panel');
         if (newPanel) { viewPanel.innerHTML = newPanel.innerHTML; initDrag(); }
+    }
+    function rerunSearch(html) {
+        // aggiorna anche il view-panel in background
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPanel = doc.querySelector('.view-panel');
+        if (newPanel) viewPanel.innerHTML = newPanel.innerHTML;
+        doSearch(lastQuery);
+    }
+    function afterMove() {
+        return isSearchActive() ? rerunSearch : refreshPanel;
+    }
+
+    // ── Move item helper ───────────────────────────────────────────────────────
+    function doMoveItem(sourceList, itemIndex, targetList) {
+        var fd = new FormData();
+        fd.append('action',      'move_item');
+        fd.append('source_list', sourceList);
+        fd.append('item_index',  itemIndex);
+        fd.append('target_list', targetList);
+        fetch(location.pathname, { method: 'POST', body: fd })
+            .then(function (r) { return r.text(); })
+            .then(afterMove());
     }
 
     // ── Elimina item AJAX ──────────────────────────────────────────────────────
@@ -727,10 +770,8 @@ function copyMd(url, btn) {
     });
 
     // ── Drag & Drop ────────────────────────────────────────────────────────────
-    var dragSrc = null;
-
     function clearDragClasses() {
-        document.querySelectorAll('.list-items li').forEach(function (el) {
+        document.querySelectorAll('.list-items li, .sr-item').forEach(function (el) {
             el.classList.remove('dragging', 'drag-above', 'drag-below');
         });
         document.querySelectorAll('.list-item').forEach(function (el) {
@@ -738,26 +779,29 @@ function copyMd(url, btn) {
         });
     }
 
+    function setupDraggable(el) {
+        if (el.dataset.dragInit) return;
+        el.dataset.dragInit = '1';
+        el.setAttribute('draggable', 'true');
+        el.addEventListener('dragstart', function (e) {
+            dragSrc = this;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('application/json', JSON.stringify({
+                list: this.dataset.list, index: this.dataset.index
+            }));
+            var self = this;
+            setTimeout(function () { if (dragSrc) self.classList.add('dragging'); }, 0);
+        });
+        el.addEventListener('dragend', function () {
+            clearDragClasses();
+            dragSrc = null;
+        });
+    }
+
     function initDrag() {
-        // ── Elementi della lista ───────────────────────────────────────────────
+        // Elementi lista (view panel) — con riordino interno
         document.querySelectorAll('.list-items li').forEach(function (li) {
-            li.setAttribute('draggable', 'true');
-
-            li.addEventListener('dragstart', function (e) {
-                dragSrc = this;
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('application/json', JSON.stringify({
-                    list: this.dataset.list,
-                    index: this.dataset.index
-                }));
-                var self = this;
-                setTimeout(function () { if (dragSrc) self.classList.add('dragging'); }, 0);
-            });
-
-            li.addEventListener('dragend', function () {
-                clearDragClasses();
-                dragSrc = null;
-            });
+            setupDraggable(li);
 
             li.addEventListener('dragover', function (e) {
                 if (!dragSrc || this === dragSrc) return;
@@ -778,19 +822,17 @@ function copyMd(url, btn) {
                 e.stopPropagation();
                 this.classList.remove('drag-above', 'drag-below');
                 if (!dragSrc || dragSrc === this) return;
+                // Riordino solo se stesso tipo e stessa lista
+                if (dragSrc.tagName !== 'LI' || dragSrc.dataset.list !== this.dataset.list) return;
 
-                var data = JSON.parse(e.dataTransfer.getData('application/json'));
                 var ul = this.parentNode;
                 var rect = this.getBoundingClientRect();
-                var dropBelow = e.clientY >= rect.top + rect.height / 2;
-
-                // DOM immediato per feedback visivo
-                ul.insertBefore(dragSrc, dropBelow ? this.nextSibling : this);
+                ul.insertBefore(dragSrc, e.clientY >= rect.top + rect.height / 2 ? this.nextSibling : this);
 
                 var newOrder = Array.from(ul.querySelectorAll('li')).map(function (el) { return el.dataset.index; });
                 var fd = new FormData();
                 fd.append('action', 'reorder');
-                fd.append('list_name', data.list);
+                fd.append('list_name', this.dataset.list);
                 newOrder.forEach(function (idx) { fd.append('order[]', idx); });
 
                 fetch(location.pathname + location.search, { method: 'POST', body: fd })
@@ -799,7 +841,10 @@ function copyMd(url, btn) {
             });
         });
 
-        // ── Pannello sinistro: spostamento in altra lista ──────────────────────
+        // Elementi risultati ricerca — solo spostamento tra liste
+        initSearchItemDrag();
+
+        // Pannello sinistro — drop target per spostamento
         document.querySelectorAll('.list-item').forEach(function (item) {
             var a = item.querySelector('a.name');
             if (!a) return;
@@ -810,100 +855,83 @@ function copyMd(url, btn) {
                 e.preventDefault();
                 this.classList.add('drag-target');
             });
-
             item.addEventListener('dragleave', function (e) {
                 if (!this.contains(e.relatedTarget)) this.classList.remove('drag-target');
             });
-
             item.addEventListener('drop', function (e) {
                 e.preventDefault();
                 this.classList.remove('drag-target');
                 if (!dragSrc || dragSrc.dataset.list === targetList) return;
-
                 dragSrc.style.opacity = '0.3';
-                var fd = new FormData();
-                fd.append('action', 'move_item');
-                fd.append('source_list', dragSrc.dataset.list);
-                fd.append('item_index', dragSrc.dataset.index);
-                fd.append('target_list', targetList);
-
-                fetch(location.pathname, { method: 'POST', body: fd })
-                    .then(function (r) { return r.text(); })
-                    .then(refreshPanel);
+                doMoveItem(dragSrc.dataset.list, dragSrc.dataset.index, targetList);
             });
+        });
+    }
+
+    function initSearchItemDrag() {
+        document.querySelectorAll('.sr-item[data-index]').forEach(function (item) {
+            setupDraggable(item);
         });
     }
 
     initDrag();
 
     // ── Ricerca globale ────────────────────────────────────────────────────────
-    var searchInput  = document.getElementById('globalSearch');
-    var searchCount  = document.getElementById('searchCount');
-    var searchPanel  = document.getElementById('searchResults');
-    var mainContent  = document.getElementById('mainContent');
-    var searchTimer  = null;
+    function doSearch(q) {
+        lastQuery = q;
+        fetch('?search_query=' + encodeURIComponent(q))
+            .then(function (r) { return r.json(); })
+            .then(function (groups) {
+                mainContent.style.display = 'none';
+                searchPanel.style.display = 'block';
+
+                if (groups.length === 0) {
+                    searchPanel.innerHTML   = '<div class="sr-empty">Nessun risultato per <strong>' + escHtml(q) + '</strong></div>';
+                    searchCount.textContent = 'Nessun risultato';
+                    return;
+                }
+
+                var totalItems = groups.reduce(function (n, g) { return n + g.items.length; }, 0);
+                searchCount.textContent = totalItems + ' element' + (totalItems === 1 ? 'o' : 'i') +
+                                          ' in ' + groups.length + ' list' + (groups.length === 1 ? 'a' : 'e');
+
+                searchPanel.innerHTML = groups.map(function (g) {
+                    var items = g.items.map(function (item) {
+                        return '<div class="sr-item' + (item.done ? ' done' : '') + '" ' +
+                               'data-index="' + item.index + '" ' +
+                               'data-list="' + escHtml(g.list) + '">' +
+                               '<span class="drag-handle" title="Trascina su una lista">⠿</span>' +
+                               '<input type="checkbox"' + (item.done ? ' checked' : '') + ' disabled>' +
+                               '<span class="sr-text">' + highlight(escHtml(item.text), q) + '</span>' +
+                               '</div>';
+                    }).join('');
+                    return '<div class="sr-group">' +
+                           '<div class="sr-group-title">📁 <a href="?view=' + encodeURIComponent(g.list) + '">' + escHtml(g.list) + '</a>' +
+                           ' <span style="font-weight:normal;color:#999;font-size:13px;">(' + g.items.length + ')</span></div>' +
+                           items + '</div>';
+                }).join('');
+
+                initSearchItemDrag();
+            });
+    }
+
+    function clearSearch() {
+        searchPanel.style.display = 'none';
+        mainContent.style.display = '';
+        searchCount.textContent   = '';
+        lastQuery = '';
+    }
 
     if (searchInput) {
         searchInput.addEventListener('input', function () {
             clearTimeout(searchTimer);
             var q = this.value.trim();
-
-            if (!q) {
-                searchPanel.style.display = 'none';
-                mainContent.style.display = '';
-                searchCount.textContent   = '';
-                return;
-            }
-
-            searchTimer = setTimeout(function () {
-                fetch('?search_query=' + encodeURIComponent(q))
-                    .then(function (r) { return r.json(); })
-                    .then(function (groups) {
-                        mainContent.style.display  = 'none';
-                        searchPanel.style.display  = 'block';
-
-                        if (groups.length === 0) {
-                            searchPanel.innerHTML    = '<div class="sr-empty">Nessun risultato per <strong>' + escHtml(q) + '</strong></div>';
-                            searchCount.textContent  = 'Nessun risultato';
-                            return;
-                        }
-
-                        var totalItems = groups.reduce(function (n, g) { return n + g.items.length; }, 0);
-                        searchCount.textContent = totalItems + ' element' + (totalItems === 1 ? 'o' : 'i') +
-                                                  ' in ' + groups.length + ' list' + (groups.length === 1 ? 'a' : 'e');
-
-                        searchPanel.innerHTML = groups.map(function (g) {
-                            var items = g.items.map(function (item) {
-                                return '<div class="sr-item' + (item.done ? ' done' : '') + '">' +
-                                       '<input type="checkbox"' + (item.done ? ' checked' : '') + ' disabled>' +
-                                       '<span class="sr-text">' + highlight(escHtml(item.text), q) + '</span>' +
-                                       '</div>';
-                            }).join('');
-                            return '<div class="sr-group">' +
-                                   '<div class="sr-group-title">📁 <a href="?view=' + encodeURIComponent(g.list) + '">' + escHtml(g.list) + '</a>' +
-                                   ' <span style="font-weight:normal;color:#999;font-size:13px;">(' + g.items.length + ')</span></div>' +
-                                   items + '</div>';
-                        }).join('');
-                    });
-            }, 280);
+            if (!q) { clearSearch(); return; }
+            searchTimer = setTimeout(function () { doSearch(q); }, 280);
         });
-
-        // Ripristina vista normale svuotando con la X del campo search
         searchInput.addEventListener('search', function () {
-            if (!this.value) {
-                searchPanel.style.display = 'none';
-                mainContent.style.display = '';
-                searchCount.textContent   = '';
-            }
+            if (!this.value) clearSearch();
         });
-    }
-
-    function escHtml(s) {
-        return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
-    function highlight(text, q) {
-        var re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-        return escHtml(text).replace(re, '<mark>$1</mark>');
     }
 }());
 </script>
