@@ -83,10 +83,20 @@ if (!is_dir($uploadDir)) {
     mkdir($uploadDir, 0755, true);
 }
 
+$orderFile = $uploadDir . '.listorder';
+
 $lists = [];
 if (is_dir($uploadDir)) {
-    $lists = array_diff(scandir($uploadDir), ['.', '..']);
-    rsort($lists);
+    $lists = array_values(array_diff(scandir($uploadDir), ['.', '..', '.listorder']));
+    if (file_exists($orderFile)) {
+        $saved   = json_decode(file_get_contents($orderFile), true) ?? [];
+        $saved   = array_values(array_filter($saved, fn($f) => in_array($f, $lists)));
+        $newOnes = array_values(array_diff($lists, $saved));
+        rsort($newOnes);
+        $lists   = array_merge($saved, $newOnes);
+    } else {
+        rsort($lists);
+    }
 }
 
 $currentList   = null;
@@ -308,6 +318,17 @@ if (isset($_GET['download_all_md'])) {
     exit;
 }
 
+// ── Riordina liste ────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'reorder_lists') {
+    $order = array_values(array_filter(
+        array_map('basename', $_POST['order'] ?? []),
+        fn($f) => file_exists($uploadDir . $f)
+    ));
+    file_put_contents($orderFile, json_encode($order));
+    header('Location: ' . $_SERVER['PHP_SELF'] . (isset($_GET['view']) ? '?view=' . urlencode($_GET['view']) : ''));
+    exit;
+}
+
 // ── Ricerca globale (JSON) ────────────────────────────────────────────────────
 if (isset($_GET['search_query'])) {
     $q       = strtolower(trim($_GET['search_query'] ?? ''));
@@ -491,6 +512,11 @@ unset($_SESSION['message']);
         .list-items li.drag-above { border-top: 3px solid #2196F3; }
         .list-items li.drag-below { border-bottom: 3px solid #2196F3; }
         .list-item.drag-target { background: #e3f2fd !important; outline: 2px dashed #2196F3; border-left-color: #1565c0; }
+        .list-item.drag-above { border-top: 3px solid #2196F3; }
+        .list-item.drag-below { border-bottom: 3px solid #2196F3; }
+        .list-drag-handle { cursor: grab; color: #ccc; font-size: 15px; user-select: none; flex-shrink: 0; margin-right: 4px; }
+        .list-drag-handle:hover { color: #999; }
+        .list-drag-handle:active { cursor: grabbing; }
         .delete-item { margin-left: auto; background: none; border: none; color: #ccc; font-size: 15px; cursor: pointer; padding: 2px 4px; line-height: 1; border-radius: 3px; flex-shrink: 0; }
         .delete-item:hover { color: #f44336; background: #ffeaea; }
         @media print { .delete-item { display: none !important; } }
@@ -585,7 +611,8 @@ unset($_SESSION['message']);
                 </h2>
                 <?php if (count($lists) > 0): ?>
                     <?php foreach ($lists as $list): ?>
-                        <div class="list-item">
+                        <div class="list-item" data-list="<?php echo htmlspecialchars($list); ?>">
+                            <span class="list-drag-handle" title="Trascina per riordinare">⠿</span>
                             <a class="name" href="?view=<?php echo urlencode($list); ?>">
                                 <?php echo htmlspecialchars($list); ?>
                             </a>
@@ -797,12 +824,69 @@ function copyMd(url, btn) {
     }
 
     function initDrag() {
+        // Pannello sinistro — riordino tra liste
+        document.querySelectorAll('.list-item[data-list]').forEach(function (item) {
+            if (item.dataset.listDragInit) return;
+            item.dataset.listDragInit = '1';
+
+            setupDraggable(item);
+
+            item.addEventListener('dragover', function (e) {
+                if (!dragSrc) return;
+                if (dragSrc.classList.contains('list-item')) {
+                    // Riordino liste
+                    if (dragSrc === this) return;
+                    e.preventDefault();
+                    document.querySelectorAll('.list-item').forEach(function (el) {
+                        el.classList.remove('drag-above', 'drag-below');
+                    });
+                    var rect = this.getBoundingClientRect();
+                    this.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drag-above' : 'drag-below');
+                } else if (dragSrc.dataset.list !== this.dataset.list) {
+                    // Sposta item nella lista
+                    e.preventDefault();
+                    this.classList.add('drag-target');
+                }
+            });
+
+            item.addEventListener('dragleave', function (e) {
+                if (!this.contains(e.relatedTarget)) {
+                    this.classList.remove('drag-target', 'drag-above', 'drag-below');
+                }
+            });
+
+            item.addEventListener('drop', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.classList.remove('drag-target', 'drag-above', 'drag-below');
+                if (!dragSrc || dragSrc === this) return;
+
+                if (dragSrc.classList.contains('list-item')) {
+                    // Riordino liste — aggiorna DOM e persiste
+                    var panel = this.parentNode;
+                    var rect  = this.getBoundingClientRect();
+                    panel.insertBefore(dragSrc, e.clientY >= rect.top + rect.height / 2 ? this.nextSibling : this);
+                    var newOrder = Array.from(panel.querySelectorAll('.list-item[data-list]')).map(function (el) { return el.dataset.list; });
+                    var fd = new FormData();
+                    fd.append('action', 'reorder_lists');
+                    newOrder.forEach(function (name) { fd.append('order[]', name); });
+                    fetch(location.pathname, { method: 'POST', body: fd });
+                } else {
+                    // Sposta item nella lista
+                    if (dragSrc.dataset.list === this.dataset.list) return;
+                    dragSrc.style.opacity = '0.3';
+                    doMoveItem(dragSrc.dataset.list, dragSrc.dataset.index, this.dataset.list);
+                }
+            });
+        });
+
         // Elementi lista (view panel) — con riordino interno
         document.querySelectorAll('.list-items li').forEach(function (li) {
             setupDraggable(li);
 
             li.addEventListener('dragover', function (e) {
                 if (!dragSrc || this === dragSrc) return;
+                if (dragSrc.classList.contains('list-item')) return;
                 e.preventDefault();
                 document.querySelectorAll('.list-items li').forEach(function (el) {
                     el.classList.remove('drag-above', 'drag-below');
@@ -842,51 +926,6 @@ function copyMd(url, btn) {
         // Elementi risultati ricerca — solo spostamento tra liste
         initSearchItemDrag();
 
-        // Pannello sinistro — drop target per spostamento
-        document.querySelectorAll('.list-item').forEach(function (item) {
-            if (item.dataset.dropInit) return;
-            item.dataset.dropInit = '1';
-
-            var a = item.querySelector('a.name');
-            if (!a) return;
-            var targetList = new URLSearchParams(a.getAttribute('href').split('?')[1]).get('view');
-
-            // I figli (link, bottoni) gestiscono drag autonomamente e propagano al parent
-            item.querySelectorAll('a, button').forEach(function (child) {
-                child.addEventListener('dragover', function (e) {
-                    if (!dragSrc || dragSrc.dataset.list === targetList) return;
-                    e.preventDefault();
-                    item.classList.add('drag-target');
-                });
-                child.addEventListener('dragleave', function (e) {
-                    if (!item.contains(e.relatedTarget)) item.classList.remove('drag-target');
-                });
-                child.addEventListener('drop', function (e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    item.classList.remove('drag-target');
-                    if (!dragSrc || dragSrc.dataset.list === targetList) return;
-                    dragSrc.style.opacity = '0.3';
-                    doMoveItem(dragSrc.dataset.list, dragSrc.dataset.index, targetList);
-                });
-            });
-
-            item.addEventListener('dragover', function (e) {
-                if (!dragSrc || dragSrc.dataset.list === targetList) return;
-                e.preventDefault();
-                this.classList.add('drag-target');
-            });
-            item.addEventListener('dragleave', function (e) {
-                if (!this.contains(e.relatedTarget)) this.classList.remove('drag-target');
-            });
-            item.addEventListener('drop', function (e) {
-                e.preventDefault();
-                this.classList.remove('drag-target');
-                if (!dragSrc || dragSrc.dataset.list === targetList) return;
-                dragSrc.style.opacity = '0.3';
-                doMoveItem(dragSrc.dataset.list, dragSrc.dataset.index, targetList);
-            });
-        });
     }
 
     function initSearchItemDrag() {
