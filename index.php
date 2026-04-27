@@ -290,6 +290,49 @@ if (isset($_GET['download_all_md'])) {
     exit;
 }
 
+// ── Riordina elementi lista ───────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'reorder') {
+    $listName = basename($_POST['list_name'] ?? '');
+    $order    = $_POST['order'] ?? [];
+    $filePath = $uploadDir . $listName;
+
+    if ($listName !== '' && file_exists($filePath) && count($order) > 0) {
+        $rawLines = preg_split('/\r\n|\r|\n/', file_get_contents($filePath));
+        $newLines = [];
+        foreach ($order as $idx) {
+            $i = (int)$idx;
+            if (isset($rawLines[$i])) $newLines[] = $rawLines[$i];
+        }
+        file_put_contents($filePath, implode(PHP_EOL, $newLines));
+    }
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($listName));
+    exit;
+}
+
+// ── Sposta elemento in altra lista ────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'move_item') {
+    $sourceName = basename($_POST['source_list'] ?? '');
+    $targetName = basename($_POST['target_list'] ?? '');
+    $itemIndex  = isset($_POST['item_index']) ? (int)$_POST['item_index'] : -1;
+    $sourcePath = $uploadDir . $sourceName;
+    $targetPath = $uploadDir . $targetName;
+
+    if ($sourceName !== '' && $targetName !== '' && $itemIndex >= 0
+        && file_exists($sourcePath) && file_exists($targetPath)) {
+        $sourceLines = preg_split('/\r\n|\r|\n/', file_get_contents($sourcePath));
+        if (isset($sourceLines[$itemIndex])) {
+            $movedLine = $sourceLines[$itemIndex];
+            array_splice($sourceLines, $itemIndex, 1);
+            while (count($sourceLines) > 0 && trim(end($sourceLines)) === '') array_pop($sourceLines);
+            file_put_contents($sourcePath, implode(PHP_EOL, $sourceLines));
+            $targetContent = rtrim(file_get_contents($targetPath));
+            file_put_contents($targetPath, ($targetContent !== '' ? $targetContent . PHP_EOL : '') . $movedLine);
+        }
+    }
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($sourceName));
+    exit;
+}
+
 // ── Elimina lista ─────────────────────────────────────────────────────────────
 if (isset($_GET['delete']) && !empty($_GET['delete'])) {
     $fileToDelete = basename($_GET['delete']);
@@ -396,6 +439,13 @@ unset($_SESSION['message']);
         .edit-actions { display: flex; gap: 10px; margin-top: 12px; }
         .no-list { text-align: center; color: #999; padding: 40px 20px; }
         .empty { text-align: center; color: #999; }
+        .drag-handle { cursor: grab; color: #ccc; font-size: 16px; user-select: none; flex-shrink: 0; line-height: 1; }
+        .drag-handle:hover { color: #999; }
+        .drag-handle:active { cursor: grabbing; }
+        .list-items li.dragging { opacity: 0.35; }
+        .list-items li.drag-above { border-top: 3px solid #2196F3; }
+        .list-items li.drag-below { border-bottom: 3px solid #2196F3; }
+        .list-item.drag-target { background: #e3f2fd !important; outline: 2px dashed #2196F3; border-left-color: #1565c0; }
     </style>
 </head>
 <body>
@@ -507,11 +557,14 @@ unset($_SESSION['message']);
                     <?php elseif (count($listContent) > 0): ?>
                         <ul class="list-items">
                             <?php $i = 1; foreach ($listContent as $item): ?>
-                                <li class="<?php echo $item['done'] ? 'done' : ''; ?>">
+                                <li class="<?php echo $item['done'] ? 'done' : ''; ?>"
+                                    data-index="<?php echo (int)$item['index']; ?>"
+                                    data-list="<?php echo htmlspecialchars($currentList); ?>">
                                     <form method="POST" class="item-row">
                                         <input type="hidden" name="action" value="toggle_item">
                                         <input type="hidden" name="list_name" value="<?php echo htmlspecialchars($currentList); ?>">
                                         <input type="hidden" name="item_index" value="<?php echo (int)$item['index']; ?>">
+                                        <span class="drag-handle">⠿</span>
                                         <input type="checkbox" <?php echo $item['done'] ? 'checked' : ''; ?>>
                                         <span class="txt"><?php echo $i++ . '. ' . htmlspecialchars($item['text']); ?></span>
                                     </form>
@@ -532,9 +585,7 @@ function copyMd(url, btn) {
     var orig = btn.textContent;
     fetch(url)
         .then(function (r) { return r.text(); })
-        .then(function (text) {
-            return navigator.clipboard.writeText(text);
-        })
+        .then(function (text) { return navigator.clipboard.writeText(text); })
         .then(function () {
             btn.textContent = '✅ Copiato!';
             setTimeout(function () { btn.textContent = orig; }, 2000);
@@ -549,24 +600,134 @@ function copyMd(url, btn) {
     var viewPanel = document.querySelector('.view-panel');
     if (!viewPanel) return;
 
+    function refreshPanel(html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var newPanel = doc.querySelector('.view-panel');
+        if (newPanel) { viewPanel.innerHTML = newPanel.innerHTML; initDrag(); }
+    }
+
+    // ── Checkbox AJAX ──────────────────────────────────────────────────────────
     viewPanel.addEventListener('change', function (e) {
         var cb = e.target;
         if (cb.type !== 'checkbox') return;
-
         var form = cb.closest('form');
         if (!form) return;
-
         cb.disabled = true;
-
         fetch(location.pathname + location.search, { method: 'POST', body: new FormData(form) })
             .then(function (r) { return r.text(); })
-            .then(function (html) {
-                var doc = new DOMParser().parseFromString(html, 'text/html');
-                var newPanel = doc.querySelector('.view-panel');
-                if (newPanel) viewPanel.innerHTML = newPanel.innerHTML;
-            })
+            .then(refreshPanel)
             .catch(function () { cb.disabled = false; });
     });
+
+    // ── Drag & Drop ────────────────────────────────────────────────────────────
+    var dragSrc = null;
+
+    function clearDragClasses() {
+        document.querySelectorAll('.list-items li').forEach(function (el) {
+            el.classList.remove('dragging', 'drag-above', 'drag-below');
+        });
+        document.querySelectorAll('.list-item').forEach(function (el) {
+            el.classList.remove('drag-target');
+        });
+    }
+
+    function initDrag() {
+        // ── Elementi della lista ───────────────────────────────────────────────
+        document.querySelectorAll('.list-items li').forEach(function (li) {
+            li.setAttribute('draggable', 'true');
+
+            li.addEventListener('dragstart', function (e) {
+                dragSrc = this;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('application/json', JSON.stringify({
+                    list: this.dataset.list,
+                    index: this.dataset.index
+                }));
+                var self = this;
+                setTimeout(function () { if (dragSrc) self.classList.add('dragging'); }, 0);
+            });
+
+            li.addEventListener('dragend', function () {
+                clearDragClasses();
+                dragSrc = null;
+            });
+
+            li.addEventListener('dragover', function (e) {
+                if (!dragSrc || this === dragSrc) return;
+                e.preventDefault();
+                document.querySelectorAll('.list-items li').forEach(function (el) {
+                    el.classList.remove('drag-above', 'drag-below');
+                });
+                var rect = this.getBoundingClientRect();
+                this.classList.add(e.clientY < rect.top + rect.height / 2 ? 'drag-above' : 'drag-below');
+            });
+
+            li.addEventListener('dragleave', function () {
+                this.classList.remove('drag-above', 'drag-below');
+            });
+
+            li.addEventListener('drop', function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.classList.remove('drag-above', 'drag-below');
+                if (!dragSrc || dragSrc === this) return;
+
+                var data = JSON.parse(e.dataTransfer.getData('application/json'));
+                var ul = this.parentNode;
+                var rect = this.getBoundingClientRect();
+                var dropBelow = e.clientY >= rect.top + rect.height / 2;
+
+                // DOM immediato per feedback visivo
+                ul.insertBefore(dragSrc, dropBelow ? this.nextSibling : this);
+
+                var newOrder = Array.from(ul.querySelectorAll('li')).map(function (el) { return el.dataset.index; });
+                var fd = new FormData();
+                fd.append('action', 'reorder');
+                fd.append('list_name', data.list);
+                newOrder.forEach(function (idx) { fd.append('order[]', idx); });
+
+                fetch(location.pathname + location.search, { method: 'POST', body: fd })
+                    .then(function (r) { return r.text(); })
+                    .then(refreshPanel);
+            });
+        });
+
+        // ── Pannello sinistro: spostamento in altra lista ──────────────────────
+        document.querySelectorAll('.list-item').forEach(function (item) {
+            var a = item.querySelector('a.name');
+            if (!a) return;
+            var targetList = new URLSearchParams(a.getAttribute('href').split('?')[1]).get('view');
+
+            item.addEventListener('dragover', function (e) {
+                if (!dragSrc || dragSrc.dataset.list === targetList) return;
+                e.preventDefault();
+                this.classList.add('drag-target');
+            });
+
+            item.addEventListener('dragleave', function (e) {
+                if (!this.contains(e.relatedTarget)) this.classList.remove('drag-target');
+            });
+
+            item.addEventListener('drop', function (e) {
+                e.preventDefault();
+                this.classList.remove('drag-target');
+                if (!dragSrc || dragSrc.dataset.list === targetList) return;
+
+                dragSrc.style.opacity = '0.3';
+                var fd = new FormData();
+                fd.append('action', 'move_item');
+                fd.append('source_list', dragSrc.dataset.list);
+                fd.append('item_index', dragSrc.dataset.index);
+                fd.append('target_list', targetList);
+
+                fetch(location.pathname, { method: 'POST', body: fd })
+                    .then(function (r) { return r.text(); })
+                    .then(refreshPanel);
+            });
+        });
+    }
+
+    initDrag();
 }());
 </script>
 </body>
