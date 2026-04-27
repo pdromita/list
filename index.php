@@ -93,7 +93,7 @@ if (is_dir($uploadDir)) {
         $saved   = array_values(array_filter($saved, fn($f) => in_array($f, $lists)));
         $newOnes = array_values(array_diff($lists, $saved));
         rsort($newOnes);
-        $lists   = array_merge($saved, $newOnes);
+        $lists   = array_merge($newOnes, $saved);
     } else {
         rsort($lists);
     }
