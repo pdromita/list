@@ -92,6 +92,7 @@ if (is_dir($uploadDir)) {
 $currentList   = null;
 $listContent   = [];
 $editMode      = false;
+$renameMode    = false;
 $editContent   = '';
 
 // ── Carica file ───────────────────────────────────────────────────────────────
@@ -139,6 +140,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 }
 
+// ── Rinomina lista ────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'rename') {
+    $oldName = basename($_POST['old_name'] ?? '');
+    $newName = preg_replace('/[^a-zA-Z0-9_\-\. ]/', '', trim($_POST['new_name'] ?? ''));
+
+    if ($oldName !== '' && $newName !== '') {
+        if (!str_ends_with(strtolower($newName), '.txt')) {
+            $newName .= '.txt';
+        }
+
+        $oldPath = $uploadDir . $oldName;
+        $newPath = $uploadDir . $newName;
+
+        if (!file_exists($oldPath)) {
+            $_SESSION['message'] = 'Lista da rinominare non trovata.';
+            header('Location: index.php');
+            exit;
+        }
+
+        if ($oldName === $newName) {
+            $_SESSION['message'] = 'Il nuovo nome e uguale a quello attuale.';
+            header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($oldName));
+            exit;
+        }
+
+        if (file_exists($newPath)) {
+            $_SESSION['message'] = 'Esiste gia una lista con questo nome.';
+            header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($oldName) . '&rename=1');
+            exit;
+        }
+
+        if (rename($oldPath, $newPath)) {
+            $_SESSION['message'] = "Lista rinominata: $oldName -> $newName";
+            header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($newName));
+            exit;
+        }
+
+        $_SESSION['message'] = 'Rinomina non riuscita. Riprova.';
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($oldName) . '&rename=1');
+        exit;
+    }
+
+    $_SESSION['message'] = 'Nome lista non valido.';
+    header('Location: index.php');
+    exit;
+}
+
+// ── Spunta / deseleziona elemento lista ──────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'toggle_item') {
+    $listName  = basename($_POST['list_name'] ?? '');
+    $itemIndex = isset($_POST['item_index']) ? (int)$_POST['item_index'] : -1;
+    $filePath  = $uploadDir . $listName;
+
+    if ($listName !== '' && $itemIndex >= 0 && file_exists($filePath)) {
+        $rawLines = preg_split('/\r\n|\r|\n/', file_get_contents($filePath));
+
+        if (isset($rawLines[$itemIndex])) {
+            $currentLine = $rawLines[$itemIndex];
+
+            if (preg_match('/^\s*\[x\]\s*/i', $currentLine)) {
+                $rawLines[$itemIndex] = preg_replace('/^\s*\[x\]\s*/i', '[ ] ', $currentLine, 1);
+            } elseif (preg_match('/^\s*\[\s\]\s*/', $currentLine)) {
+                $rawLines[$itemIndex] = preg_replace('/^\s*\[\s\]\s*/', '[x] ', $currentLine, 1);
+            } elseif (trim($currentLine) !== '') {
+                $rawLines[$itemIndex] = '[x] ' . ltrim($currentLine);
+            }
+
+            file_put_contents($filePath, implode(PHP_EOL, $rawLines));
+        }
+    }
+
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?view=' . urlencode($listName));
+    exit;
+}
+
 // ── Elimina lista ─────────────────────────────────────────────────────────────
 if (isset($_GET['delete']) && !empty($_GET['delete'])) {
     $fileToDelete = basename($_GET['delete']);
@@ -158,9 +234,32 @@ if (isset($_GET['view']) && !empty($_GET['view'])) {
     if (file_exists($filePath)) {
         $rawContent  = file_get_contents($filePath);
         $editContent = $rawContent;
-        $listContent = array_filter(explode("\n", $rawContent), fn($l) => trim($l) !== '');
+
+        $rawLines = preg_split('/\r\n|\r|\n/', $rawContent);
+        foreach ($rawLines as $lineIndex => $line) {
+            if (trim($line) === '') {
+                continue;
+            }
+
+            $itemText = $line;
+            $isDone   = false;
+
+            if (preg_match('/^\s*\[x\]\s*(.*)$/i', $line, $m)) {
+                $isDone   = true;
+                $itemText = $m[1];
+            } elseif (preg_match('/^\s*\[\s\]\s*(.*)$/', $line, $m)) {
+                $itemText = $m[1];
+            }
+
+            $listContent[] = [
+                'index' => $lineIndex,
+                'text'  => $itemText,
+                'done'  => $isDone,
+            ];
+        }
     }
-    $editMode = isset($_GET['edit']);
+    $editMode   = isset($_GET['edit']);
+    $renameMode = isset($_GET['rename']) && !$editMode;
 }
 
 $message = isset($_SESSION['message']) ? $_SESSION['message'] : '';
@@ -193,6 +292,8 @@ unset($_SESSION['message']);
         .btn-green:hover { background: #388e3c; }
         .btn-orange{ background: #ff9800; color: white; }
         .btn-orange:hover{ background: #e65100; }
+        .btn-slate { background: #607d8b; color: white; }
+        .btn-slate:hover { background: #455a64; }
         .content { display: grid; grid-template-columns: 1fr 2fr; gap: 20px; }
         .lists-panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .lists-panel h2 { color: #333; margin-bottom: 15px; font-size: 18px; }
@@ -202,12 +303,19 @@ unset($_SESSION['message']);
         .list-item .actions { display: flex; gap: 6px; flex-shrink: 0; }
         .list-item .edit-lnk { color: #ff9800; font-size: 13px; text-decoration: none; }
         .list-item .edit-lnk:hover { text-decoration: underline; }
+        .list-item .rename-lnk { color: #607d8b; font-size: 13px; text-decoration: none; }
+        .list-item .rename-lnk:hover { text-decoration: underline; }
         .list-item .delete { color: #f44336; font-size: 13px; text-decoration: none; }
         .list-item .delete:hover { text-decoration: underline; }
         .view-panel { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .view-panel h2 { color: #333; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center; }
         .list-items { list-style: none; }
         .list-items li { padding: 12px; margin-bottom: 8px; background: #f0f7ff; border-left: 4px solid #4caf50; border-radius: 4px; }
+        .item-row { display: flex; align-items: center; gap: 10px; }
+        .item-row input[type="checkbox"] { transform: scale(1.2); cursor: pointer; }
+        .item-row .txt { line-height: 1.45; }
+        .list-items li.done { opacity: .78; background: #eef7ee; border-left-color: #7cb342; }
+        .list-items li.done .txt { text-decoration: line-through; color: #4f6b4f; }
         .edit-area { width: 100%; min-height: 280px; padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-family: monospace; font-size: 14px; resize: vertical; }
         .edit-actions { display: flex; gap: 10px; margin-top: 12px; }
         .no-list { text-align: center; color: #999; padding: 40px 20px; }
@@ -264,6 +372,7 @@ unset($_SESSION['message']);
                             </a>
                             <div class="actions">
                                 <a class="edit-lnk" href="?view=<?php echo urlencode($list); ?>&amp;edit=1">✏️ Modifica</a>
+                                <a class="rename-lnk" href="?view=<?php echo urlencode($list); ?>&amp;rename=1">📝 Rinomina</a>
                                 <a class="delete" href="?delete=<?php echo urlencode($list); ?>" onclick="return confirm('Eliminare questa lista?');">✕</a>
                             </div>
                         </div>
@@ -277,8 +386,11 @@ unset($_SESSION['message']);
                 <?php if ($currentList): ?>
                     <h2>
                         <?php echo htmlspecialchars($currentList); ?>
-                        <?php if (!$editMode): ?>
-                            <a href="?view=<?php echo urlencode($currentList); ?>&amp;edit=1" class="btn btn-orange" style="font-size:13px;padding:6px 12px;">✏️ Modifica</a>
+                        <?php if (!$editMode && !$renameMode): ?>
+                            <div style="display:flex;gap:8px;">
+                                <a href="?view=<?php echo urlencode($currentList); ?>&amp;rename=1" class="btn btn-slate" style="font-size:13px;padding:6px 12px;">📝 Rinomina</a>
+                                <a href="?view=<?php echo urlencode($currentList); ?>&amp;edit=1" class="btn btn-orange" style="font-size:13px;padding:6px 12px;">✏️ Modifica</a>
+                            </div>
                         <?php endif; ?>
                     </h2>
 
@@ -293,10 +405,31 @@ unset($_SESSION['message']);
                                 <a href="?view=<?php echo urlencode($currentList); ?>" class="btn btn-blue">Annulla</a>
                             </div>
                         </form>
+                    <?php elseif ($renameMode): ?>
+                        <form method="POST">
+                            <input type="hidden" name="action" value="rename">
+                            <input type="hidden" name="old_name" value="<?php echo htmlspecialchars($currentList); ?>">
+                            <div class="form-group" style="max-width:460px;">
+                                <label for="new_name">Nuovo nome lista</label>
+                                <input id="new_name" type="text" name="new_name" value="<?php echo htmlspecialchars($currentList); ?>" required>
+                            </div>
+                            <div class="edit-actions">
+                                <button type="submit" class="btn btn-slate">Salva nome</button>
+                                <a href="?view=<?php echo urlencode($currentList); ?>" class="btn btn-blue">Annulla</a>
+                            </div>
+                        </form>
                     <?php elseif (count($listContent) > 0): ?>
                         <ul class="list-items">
                             <?php $i = 1; foreach ($listContent as $item): ?>
-                                <li><?php echo $i++ . '. ' . htmlspecialchars($item); ?></li>
+                                <li class="<?php echo $item['done'] ? 'done' : ''; ?>">
+                                    <form method="POST" class="item-row">
+                                        <input type="hidden" name="action" value="toggle_item">
+                                        <input type="hidden" name="list_name" value="<?php echo htmlspecialchars($currentList); ?>">
+                                        <input type="hidden" name="item_index" value="<?php echo (int)$item['index']; ?>">
+                                        <input type="checkbox" <?php echo $item['done'] ? 'checked' : ''; ?> onchange="this.form.submit()">
+                                        <span class="txt"><?php echo $i++ . '. ' . htmlspecialchars($item['text']); ?></span>
+                                    </form>
+                                </li>
                             <?php endforeach; ?>
                         </ul>
                     <?php else: ?>
